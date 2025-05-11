@@ -180,6 +180,17 @@ def main():
     ap.add_argument("--roi_ratio", default="0.25,0.20,0.75,0.80", help="ROI as xmin,ymin,xmax,ymax in 0‑1 (default central box)")
     args = ap.parse_args()
     
+    
+    mouse_pos = {"x": None, "y": None}
+    window_name = "Seat monitor - center ROI"
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_MOUSEMOVE:
+           mouse_pos["x"], mouse_pos["y"] = x, y 
+    
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(window_name, on_mouse)
+    
+    
     cam_list = list_cameras()                   # [0, 1, 2, …]
     if not cam_list:
         raise RuntimeError("Камеры не найдены")
@@ -244,6 +255,12 @@ def main():
     ok, frame = cap.read()
     if not ok:
         raise RuntimeError("Не удалось прочитать первый кадр.")
+    
+    
+    h0, w0 = frame.shape[:2]
+    mouse_pos["x"], mouse_pos["y"] = w0 // 2, h0 // 2
+    
+    
     roi_poly = build_roi_poly(frame.shape, roi_ratio)
     roi_area = roi_poly.area
 
@@ -330,7 +347,7 @@ def main():
        # cv2.putText(annotated, f"People in ROI: {len(valid_boxes)}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
                                # "c- переключить камеру\n",
                                 #"r- новый блок\n")
-        cv2.imshow("Seat monitor – center ROI", annotated)
+        cv2.imshow(window_name, annotated)
 
         if DEBUG_RAW:
             dbg = frame.copy()
@@ -375,15 +392,19 @@ def main():
 
         # (d) удалить ROI под центром окна
         elif key == ord('d') or key == ru('в'):
-            h, w = frame.shape[:2]
-            px, py = w // 2, h // 2
-            hit = next((r for r in rois if r["poly"].contains(Point(px, py))), None)
+            # Если курсор ещё не перемещался — предупредим пользователя
+            if mouse_pos["x"] is None or mouse_pos["y"] is None:
+                print("[WARN] Переместите курсор в окно и наведите на ROI, затем нажмите 'd'")
+                continue
+            px, py = int(mouse_pos["x"]), int(mouse_pos["y"])
+            # covers() учитывает и границу полигона
+            hit = next((r for r in rois if r["poly"].covers(Point(px, py))), None)
             if hit:
                 saved_rois[:] = [s for s in saved_rois if s["seat_id"] != hit["seat_id"]]
                 rebuild_rois(frame.shape)
                 print(f"[INFO] ROI seat_id={hit['seat_id']} удалён")
             else:
-                print("[WARN] Курсор не внутри ROI")
+                print(f"[WARN] Ни один ROI не содержит точку ({px}, {py})")
 
         # (s) сохранить конфиг
         elif key == ord('s') or key == ru('ы'):
