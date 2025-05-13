@@ -4,3 +4,9 @@ fastapi-users[sqlalchemy]
 psycopg2
 python-dotenv
 sqlalchemy
+requests           
+opencv-python        
+torch                
+ultralytics         
+numpy                
+shapely 
