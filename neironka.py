@@ -18,15 +18,29 @@ from ultralytics import YOLO
 from shapely.geometry import Polygon
 import json, pathlib, itertools        # для seats.json
 from shapely.geometry import Point     # проверка “курсор внутри ROI?”
+import time, requests
 
-
-
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")  # URL FastAPI
-SEAT_ID     = int(os.getenv("SEAT_ID", 5))                      # id места в БД
+BASE = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+# BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")  # URL FastAPI
+#SEAT_ID     = int(os.getenv("SEAT_ID", ))                      # id места в БД
+BACKEND_URL = f"{BASE}/device"
 DEVICE_KEY  = os.getenv("DEVICE_KEY", "ojyntHWGrul_idmZAJWpG8osDdL56QgVpZ6IcuxgwwY=")                      
 SEND_EVERY  = 1 
 
 ENABLE_GUI = os.getenv("ENABLE_GUI", "0") == "1"
+
+def fetch_seat_ids() -> list[int]:
+    url = f"{BACKEND_URL}/seats"                 # фактически /device/seats
+    headers = {"X-Device-Key": DEVICE_KEY}
+    while True:
+        try:
+            print(f"[DEBUG] GET {url} headers={headers}")
+            r = requests.get(url, headers=headers, timeout=2)
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.RequestException as e:
+            print(f"[WARN] fetch_seat_ids failed ({e}), retry in 2s…")
+            time.sleep(2)
 
 def safe_imshow(winname: str, img):
     if ENABLE_GUI:
@@ -155,23 +169,32 @@ def is_human_kpts(kconf: torch.Tensor) -> bool:
     facial_ok   = (kconf[facial_idx]   > KPT_TH).sum() >= 2
     shoulders_ok = (kconf[shoulder_idx] > KPT_TH).sum() == 2
     return facial_ok and shoulders_ok
-"""""
+
+
+def send_status_to_backend(seat_id: int, occupied: bool):
+    url = f"{BACKEND_URL}/seats/{seat_id}/status"
+    headers = {"X-Device-Key": DEVICE_KEY} if DEVICE_KEY else {}
+    payload = {"seat_status": 1 if occupied else 0}
+    requests.put(url, json=payload, headers=headers, timeout=2)
+
+
+
 # ── сеть: отправить 0 / 1 на сервер ────────────────────
-def send_status_to_backend(status: int) -> None:
+# def send_status_to_backend(seat_id: int, status: int) -> None:
     
     ##PUT /device/seats/{SEAT_ID}/status  {"seat_status": status}
 
-    url = f"{BACKEND_URL}/device/seats/{SEAT_ID}/status"
-    headers = {"X-Device-Key": DEVICE_KEY} if DEVICE_KEY else {}
-    try:
-        r = requests.put(url, json={"seat_status": status},
-                         headers=headers, timeout=2)
-        r.raise_for_status()
-        print(f"✓ sent seat {SEAT_ID} → {status}")
-    except Exception as e:
-        # не прерываем детекцию, если сеть упала
-        print(f"✗ send error: {e}")
-"""
+    # url = f"{BACKEND_URL}/device/seats/{seat_id}/status"
+    # headers = {"X-Device-Key": DEVICE_KEY} if DEVICE_KEY else {}
+    # try:
+    #     r = requests.put(url, json={"seat_status": status},
+    #                      headers=headers, timeout=2)
+    #     r.raise_for_status()
+    #     print(f"✓ sent seat {seat_id} → {status}")
+    # except Exception as e:
+    #     # не прерываем детекцию, если сеть упала
+    #     print(f"✗ send error: {e}")
+
 # ── 2. ОСНОВНАЯ ФУНКЦИЯ ────────────────────────────────────────────────────
 
 def main():
@@ -206,25 +229,41 @@ def main():
     print(f"[INFO] Стартуем с камеры {cam_list[cur_cam_idx]}")
     
     
-    
-    saved_rois = load_saved_rois()
+    seat_ids = fetch_seat_ids()
+    raw_saved = load_saved_rois()
 
-    # если json пуст, а --roi_ratio задан → один прямоугольник по умолчанию
-    if not saved_rois and args.roi_ratio != "ask":
-        saved_rois = [{
-            "seat_id": next(_id_gen),
+    
+    if not raw_saved and args.roi_ratio != "ask":
+        raw_saved = [{
             "roi": tuple(map(float, args.roi_ratio.split(",")))
         }]
 
-    rois = []     
+
+    # если json пуст, а --roi_ratio задан → один прямоугольник по умолчанию
+    saved_rois: list[dict] = []
+    for idx, entry in enumerate(raw_saved):
+        if idx < len(seat_ids):
+            saved_rois.append({
+                "seat_id": seat_ids[idx],
+                "roi":      entry["roi"]
+            })
+        else:
+            print(f"[WARN] нет DB-seat_id для ROI #{idx}, пропускаем")
+
+    rois: list[dict] = []     
     
     
     def rebuild_rois(shape):
         rois.clear()
         for seat in saved_rois:
+        # вместо жёсткого seat["seat_id"] берём idx-й из fetch_seat_ids()
+            sid = seat["seat_id"]
+            if sid not in seat_ids:
+                print(f"[WARN] пропускаем ROI для несуществующего seat_id={sid}")
+                continue
             poly = build_roi_poly(shape, tuple(seat["roi"]))
             rois.append({
-                "seat_id": seat["seat_id"],
+                "seat_id": sid,
                 "ratio":   tuple(seat["roi"]),
                 "poly":    poly,
                 "area":    poly.area,
@@ -324,25 +363,57 @@ def main():
             else:
                 valid_boxes.append((x1, y1, x2, y2))
 
-        seat_status = 1 if len(valid_boxes) else 0
         
+        # seat_status = 1 if len(valid_boxes) else 0
+        
+        # if seat_status != prev_status or frame_id % SEND_EVERY == 0:
+        #     send_status_to_backend(r["seat_id"], seat_status)
+        #     prev_status = seat_status
+
+        for r in rois:
+     # подсчёт людей в данной ROI
+            count_in_roi = 0
+            for (bx1, by1, bx2, by2) in valid_boxes:
+                box_poly = Polygon([(bx1, by1), (bx2, by1), (bx2, by2), (bx1, by2)])
+                inter = r["poly"].intersection(box_poly).area
+                if (inter / max(box_poly.area, 1) >= ROI_BOX_MIN
+                    or inter / max(r["area"], 1) >= ROI_COVER_MIN):
+                    count_in_roi += 1
+
+            status = 1 if count_in_roi > 0 else 0
+            # шлём, если изменилось или по таймеру
+            if r["prev"] is None or status != r["prev"] or frame_id % SEND_EVERY == 0:
+                send_status_to_backend(r["seat_id"], status)
+                r["prev"] = status
+
         # 3.3 Отладка
         if DEBUG_REASON and frame_id % PRINT_EVERY == 0:
             print(f"[{frame_id}] Отброшено:", reasons)
 
         # 3.4 Визуализация
         annotated = frame.copy()
-        for (x1, y1, x2, y2) in valid_boxes:
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        # рисуем все детекции
+        for (bx1, by1, bx2, by2) in valid_boxes:
+            cv2.rectangle(annotated, (bx1, by1), (bx2, by2), (0, 0, 255), 2)
 
-        # ROI маска
-        overlay = annotated.copy()
-        # рамка ROI (тонкая белая линия)
+        # для каждой ROI считаем своё число людей и аннотируем только занятые
         for r in rois:
             x1, y1, x2, y2 = ratio2px(frame.shape, r["ratio"])
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(annotated, f"People in ROI: {len(valid_boxes)}", (x1 + 4, y1 + 18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            # подсчёт людей в данной ROI
+            count_in_roi = 0
+            for (bx1, by1, bx2, by2) in valid_boxes:
+                from shapely.geometry import Polygon as _Polygon
+                box_poly = _Polygon([(bx1, by1), (bx2, by1), (bx2, by2), (bx1, by2)])
+                inter = r["poly"].intersection(box_poly).area
+                if inter / max(box_poly.area, 1) >= ROI_BOX_MIN or inter / max(r["area"], 1) >= ROI_COVER_MIN:
+                    count_in_roi += 1
+            # цвет рамки: зелёный, если человек найден, иначе белый
+            color = (0, 255, 0) if count_in_roi > 0 else (255, 255, 255)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2),color, 2)
+            # текст выводим только при найденных людях
+            #if count_in_roi > 0:
+            #    cv2.putText(annotated, f"People in ROI: {count_in_roi}", (x1 + 4, y1 + 18),
+            #                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
        # cv2.putText(annotated, f"People in ROI: {len(valid_boxes)}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
                                # "c- переключить камеру\n",
@@ -374,37 +445,63 @@ def main():
 
         # (r) задать ОДИН ROI заново мышью
         elif key == ord('r') or key == ru('к'):
-            saved_rois[:] = [{
-                "seat_id": next(_id_gen),
-                "roi": ask_roi(frame)
-            }]
-            rebuild_rois(frame.shape)
-            print("[INFO] ROI переопределён")
+            used  = {s["seat_id"] for s in saved_rois}
+            avail = [sid for sid in seat_ids if sid not in used]
+            if not avail:
+                print("[WARN] нет свободных DB-seat_id для нового ROI")
+            else:
+                saved_rois[:] = [{
+                    "seat_id": avail[0],
+                    "roi":      ask_roi(frame)
+                }]
+                rebuild_rois(frame.shape)
+                print("[INFO] ROI переопределён")
 
         # (a) добавить ещё один ROI
         elif key == ord('a') or key == ru('ф'):
-            saved_rois.append({
-                "seat_id": next(_id_gen),
-                "roi": ask_roi(frame)
-            })
-            rebuild_rois(frame.shape)
-            print("[INFO] ROI добавлен")
+            used  = {s["seat_id"] for s in saved_rois}
+            avail = [sid for sid in seat_ids if sid not in used]
+            if not avail:
+                print("[WARN] нет свободных DB-seat_id для нового ROI")
+            else:
+                saved_rois.append({
+                    "seat_id": avail[0],
+                    "roi":      ask_roi(frame)
+                })
+                rebuild_rois(frame.shape)
+                print("[INFO] ROI добавлен")
 
         # (d) удалить ROI под центром окна
+        
         elif key == ord('d') or key == ru('в'):
-            # Если курсор ещё не перемещался — предупредим пользователя
             if mouse_pos["x"] is None or mouse_pos["y"] is None:
-                print("[WARN] Переместите курсор в окно и наведите на ROI, затем нажмите 'd'")
-                continue
-            px, py = int(mouse_pos["x"]), int(mouse_pos["y"])
-            # covers() учитывает и границу полигона
-            hit = next((r for r in rois if r["poly"].covers(Point(px, py))), None)
-            if hit:
-                saved_rois[:] = [s for s in saved_rois if s["seat_id"] != hit["seat_id"]]
-                rebuild_rois(frame.shape)
-                print(f"[INFO] ROI seat_id={hit['seat_id']} удалён")
+                print("[WARN] Наведите мышь на ROI и нажмите 'd'")
             else:
-                print(f"[WARN] Ни один ROI не содержит точку ({px}, {py})")
+                px, py = int(mouse_pos["x"]), int(mouse_pos["y"])
+                hit = next((r for r in rois if r["poly"].covers(Point(px, py))), None)
+                if hit:
+                    saved_rois[:] = [
+                        s for s in saved_rois
+                        if s["seat_id"] != hit["seat_id"]
+                    ]
+                    rebuild_rois(frame.shape)
+                    print(f"[INFO] ROI seat_id={hit['seat_id']} удалён")
+                else:
+                    print(f"[WARN] Ни один ROI не содержит точку ({px},{py})")
+        # elif key == ord('d') or key == ru('в'):
+        #     # Если курсор ещё не перемещался — предупредим пользователя
+        #     if mouse_pos["x"] is None or mouse_pos["y"] is None:
+        #         print("[WARN] Переместите курсор в окно и наведите на ROI, затем нажмите 'd'")
+        #         continue
+        #     px, py = int(mouse_pos["x"]), int(mouse_pos["y"])
+        #     # covers() учитывает и границу полигона
+        #     hit = next((r for r in rois if r["poly"].covers(Point(px, py))), None)
+        #     if hit:
+        #         saved_rois[:] = [s for s in saved_rois if s["seat_id"] != hit["seat_id"]]
+        #         rebuild_rois(frame.shape)
+        #         print(f"[INFO] ROI seat_id={hit['seat_id']} удалён")
+        #     else:
+        #         print(f"[WARN] Ни один ROI не содержит точку ({px}, {py})")
 
         # (s) сохранить конфиг
         elif key == ord('s') or key == ru('ы'):

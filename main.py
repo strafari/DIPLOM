@@ -5,7 +5,7 @@ from starlette.responses import StreamingResponse
 from fastapi_users import fastapi_users, FastAPIUsers
 from pydantic import BaseModel, Field
 from fastapi import HTTPException
-from fastapi import FastAPI, Request, status, Depends, Query
+from fastapi import FastAPI, Request, status, Depends, Query, APIRouter
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, insert, delete, update
@@ -32,6 +32,14 @@ import io
 import os
 from uuid import uuid4
 from fastapi.middleware.cors import CORSMiddleware
+import subprocess, sys, os, signal
+from fastapi.security import APIKeyHeader
+from dotenv import load_dotenv
+from sqlalchemy import select
+
+
+load_dotenv()
+
 
 
 app = FastAPI(title="Bashnya_mob")
@@ -59,9 +67,78 @@ app.include_router(
 )
 
 
+
+
+
+############################ NEIRONKA
+
+DEVICE_KEY = os.getenv("DEVICE_KEY")            # храните в .env / secrets
+api_key_header = APIKeyHeader(name="X-Device-Key", auto_error=False)
+
+async def verify_device(api_key: str = Depends(api_key_header)) -> None:
+    if not DEVICE_KEY:
+        # ключ не настроен → доступ запрещён всем
+        raise HTTPException(500, "DEVICE_KEY not configured")
+    if api_key != DEVICE_KEY:
+        raise HTTPException(403, "Invalid device key")
+
+device_router = APIRouter(
+    prefix="/device",                
+    tags=["device"],
+    dependencies=[Depends(verify_device)]  
+)
+
+
+class SeatStatusUpdate(BaseModel):
+    seat_status: int = Field(..., ge=0, le=1,
+                             description="0 – свободно, 1 – занято")
+    
+
+_neironka_proc: subprocess.Popen | None = None
+
+def _start_neironka():
+    """
+    Запускает neironka.py фоновым процессом.
+    Все параметры передаём через переменные окружения,
+    чтобы сам скрипт остался нетронутым.
+    """
+    global _neironka_proc
+
+    # путь к скрипту   (если он рядом с main.py – так и оставьте)
+    script_path = r"C:\Users\4739310\Desktop\DIPLOM\diplom_project\neuronka\neironka.py"
+
+    # формируем команду
+    cmd = [
+        sys.executable,      # то же Python-окружение, что и у бэка
+        script_path,
+        "--source", os.getenv("NEIRONKA_SOURCE", "0"),
+    ]
+
+    env = os.environ.copy()
+    # то, что мы добавляли в neironka.py
+    env.setdefault("BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+    #env.setdefault("SEAT_ID",     os.getenv("SEAT_ID",  ))
+    env.setdefault("AUTH_TOKEN",  os.getenv("AUTH_TOKEN",  "ojyntHWGrul_idmZAJWpG8osDdL56QgVpZ6IcuxgwwY="))
+
+    _neironka_proc = subprocess.Popen(cmd, env=env)
+    print(f"✓ neironka запущена (pid={_neironka_proc.pid})")
+
+def _stop_neironka():
+    """Аккуратно гасим процесс YOLO при остановке FastAPI."""
+    global _neironka_proc
+    if _neironka_proc and _neironka_proc.poll() is None:  # ещё живой
+        print("⏹  останавливаю neironka …")
+        _neironka_proc.send_signal(signal.SIGTERM)
+        try:
+            _neironka_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _neironka_proc.kill()
+        print("✓ neironka остановлена")
+        
+    
 current_user = fastapi_users.current_user()
 
-# ---------------------- USER ROUTES ---------------------- #
+############################## USER 
 
 
 @app.get("/htoya/", response_model=UserRead, tags=["user"])
@@ -120,7 +197,7 @@ async def delete_user(
     return {"message": "Пользователь и связанные данные успешно удалены"}
 
 
-# COWORKING 
+############################## COWORKING 
 
 
 @app.get("/coworking/", response_model=List[dict], tags=["coworking"])
@@ -216,7 +293,7 @@ async def delete_coworking(
     return {"message": "Коворкинг и все связанные данные удалены"}
 
 
-# BOOKING
+############################### BOOKING
 
 
 @app.get("/bookings/", response_model=List[BookingRead], tags=["booking"])
@@ -296,7 +373,7 @@ async def delete_booking(
     return {"message": "Бронирование удалено"}
 
 
-# SEATS
+############################### SEATS
 
 
 @app.get("/seats/", response_model=List[SeatRead], tags=["seats"])
@@ -325,28 +402,59 @@ async def create_seat(
     return created_seat
 
 
-@app.put("/seats/{seat_id}", response_model=SeatRead, tags=["seats"])
-async def update_seat(
-    seat_id: int,
-    seat: SeatCreate,
+@device_router.get("/seats", response_model=List[int])
+async def device_list_seat_ids(
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_user),
 ):
-    if not user.is_superuser:
-        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
+    """
+    Возвращает список ВСЕХ seat_id.
+    Доступно только по X-Device-Key.
+    """
+    result = await session.execute(select(Seat.seat_id))
+    return result.scalars().all()
 
+@device_router.put("/seats/{seat_id}/status", response_model=SeatRead)
+async def update_seat_status_device(
+    seat_id: int,
+    body: SeatStatusUpdate,   # { seat_status: Literal[0,1] }
+    session: AsyncSession = Depends(get_async_session),
+):
     stmt = (
         update(Seat)
         .where(Seat.seat_id == seat_id)
-        .values(**seat.dict())
+        .values(seat_status=body.seat_status)
         .returning(Seat)
     )
     result = await session.execute(stmt)
-    updated_seat = result.scalar_one_or_none()
-    if not updated_seat:
-        raise HTTPException(status_code=404, detail="Место не найдено")
+    seat = result.scalar_one_or_none()
+    if seat is None:
+        raise HTTPException(404, "Seat not found")
     await session.commit()
-    return updated_seat
+    return seat
+    
+@app.put("/seats/{seat_id}/status", response_model=SeatRead, tags=["seats"])
+async def update_seat_status(
+    seat_id: int,
+    body: SeatStatusUpdate,
+    session: AsyncSession = Depends(get_async_session),
+    # 👉 если хотите, уберите Depends(current_user), чтобы камера могла
+    #    слать данные без JWT
+):
+    stmt = (
+        update(Seat)
+        .where(Seat.seat_id == seat_id)
+        .values(seat_status=body.seat_status)
+        .returning(Seat)
+    )
+    result = await session.execute(stmt)
+    seat = result.scalar_one_or_none()
+    if seat is None:
+        raise HTTPException(404, "Seat not found")
+    await session.commit()
+    return seat
+
+
+
 
 
 @app.delete("/seats/{seat_id}", tags=["seats"])
@@ -366,7 +474,7 @@ async def delete_seat(
     return {"message": "Место и связанные бронирования удалены"}
 
 
-# EVENTS
+######################## EVENTS
 
 
 @app.get("/events/", response_model=List[EventRead], tags=["events"])
@@ -590,3 +698,15 @@ async def delete_news(
         raise HTTPException(status_code=404, detail="Новость не найдена")
     await session.commit()
     return {"message": "Новость удалена"}
+
+
+
+app.include_router(device_router)
+
+@app.on_event("startup")
+async def _on_startup():
+    _start_neironka()
+
+@app.on_event("shutdown")
+async def _on_shutdown():
+    _stop_neironka()
