@@ -23,16 +23,17 @@ class User(Base):
     registration_date = Column(TIMESTAMP, default=datetime.utcnow)
     is_superuser = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True)
-    booking = relationship("Booking", back_populates="user")  
-    event_registration = relationship("EventRegistration", back_populates="user")  
+    booking = relationship("Booking", back_populates="user")
+    event_registration = relationship("EventRegistration", back_populates="user")
+
 
 class Coworking(Base):
     __tablename__ = "coworking"
 
     coworking_id = Column(Integer, primary_key=True)
-    coworking_location = Column(String(100), nullable=False)
-    coworking_description = Column(String(100), nullable=True)
-    seat = relationship("Seat", back_populates="coworking") 
+    coworking_location = Column(Integer, nullable=False)
+    seat = relationship("Seat", back_populates="coworking")
+
 
 class Booking(Base):
     __tablename__ = "booking"
@@ -43,8 +44,9 @@ class Booking(Base):
     booking_start = Column(TIMESTAMP, nullable=False)
     booking_end = Column(TIMESTAMP, nullable=False)
     booking_email = Column(String(100), nullable=False, unique=True)
-    user = relationship("User", back_populates="booking")  
-    seat = relationship("Seat", back_populates="booking")  
+    user = relationship("User", back_populates="booking")
+    seat = relationship("Seat", back_populates="booking")
+
 
 class Seat(Base):
     __tablename__ = "seat"
@@ -53,20 +55,25 @@ class Seat(Base):
     seat_coworking_id = Column(Integer, ForeignKey("coworking.coworking_id"), nullable=False)
     seat_index = Column(Integer, nullable=False)
     seat_status = Column(Integer, nullable=False)
-    coworking = relationship("Coworking", back_populates="seat")  
-    booking = relationship("Booking", back_populates="seat")  
+    coworking = relationship("Coworking", back_populates="seat")
+    booking = relationship("Booking", back_populates="seat")
+
 
 class Event(Base):
     __tablename__ = "event"
 
     event_id = Column(Integer, primary_key=True)
-    event_name = Column(String, nullable=False)
-    event_description = Column(String, nullable=True)
+    event_name = Column(String(100), nullable=False)
+    event_description = Column(String(1000), nullable=True)
     event_date_time = Column(TIMESTAMP, nullable=False)
     event_location = Column(String(100), nullable=False)
     event_max_seats = Column(Integer, nullable=False)
-    event_registration = relationship("EventRegistration", back_populates="event")  
-    
+    event_photo = Column(String(255), nullable=False)
+    event_host = Column(String(255), nullable=False)
+    event_price = Column(String(10), nullable=False)
+    event_registration = relationship("EventRegistration", back_populates="event")
+
+
 class EventRegistration(Base):
     __tablename__ = "event_registration"
 
@@ -75,17 +82,20 @@ class EventRegistration(Base):
     event_registration_event_id = Column(Integer, ForeignKey("event.event_id"), nullable=False)
     event_reg_date_time = Column(TIMESTAMP, nullable=False)
     event_reg_email = Column(String(100), nullable=False)
-    user = relationship("User", back_populates="event_registration")  
-    event = relationship("Event", back_populates="event_registration") 
+    user = relationship("User", back_populates="event_registration")
+    event = relationship("Event", back_populates="event_registration")
 
 
 class News(Base):
     __tablename__ = "news"
 
     news_id = Column(Integer, primary_key=True)
-    news_image = Column(String(255), nullable=False)  # URL или путь к изображению
+    news_photo = Column(String(255), nullable=False)  # URL или путь к изображению
     news_text = Column(String(5000), nullable=False)
     news_date = Column(TIMESTAMP, nullable=False)
+    news_title = Column(String(50), nullable=False)
+
+
 
 
 engine = create_async_engine(DATABASE_URL)
@@ -102,5 +112,5 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 
 
 async def session() -> AsyncSession:
-   async with async_session_maker() as session:
+    async with async_session_maker() as session:
         yield session

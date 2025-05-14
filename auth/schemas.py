@@ -5,13 +5,12 @@ from fastapi_users import schemas
 from pydantic import BaseModel, EmailStr, Field
 
 
-
 class UserRead(schemas.BaseUser[int]):
     id: int
     user_name: str
     email: EmailStr
     is_active: bool = True
-    is_superuser: bool 
+    is_superuser: bool
 
     class Config:
         orm_mode = True
@@ -25,13 +24,10 @@ class UserCreate(schemas.BaseUserCreate):
 
 class CoworkingRead(BaseModel):
     coworking_id: int
-    coworking_location: str
-    coworking_description: Optional[str] = None
+    coworking_location: int
 
 class CoworkingCreate(BaseModel):
-    coworking_location: str
-    coworking_description: Optional[str] = None
-
+    coworking_location: int
 
 class BookingRead(BaseModel):
     booking_id: int
@@ -47,11 +43,9 @@ class BookingCreate(BaseModel):
     booking_end: datetime
     booking_email: str
 
-
 class SeatRead(BaseModel):
     seat_id: int
     seat_coworking_id: int
-    booking_id: Optional[int] = None
     seat_index: int
     seat_status: int
 
@@ -60,7 +54,8 @@ class SeatCreate(BaseModel):
     seat_index: int
     seat_status: int
 
-
+class SeatStatusUpdate(BaseModel):
+    seat_status: int
 
 class EventRead(BaseModel):
     event_id: int
@@ -69,6 +64,9 @@ class EventRead(BaseModel):
     event_date_time: datetime
     event_location: str
     event_max_seats: int
+    event_photo: str
+    event_host: str
+    event_price: str
 
 class EventCreate(BaseModel):
     event_name: str
@@ -76,8 +74,9 @@ class EventCreate(BaseModel):
     event_date_time: datetime
     event_location: str
     event_max_seats: int
-
-
+    event_photo: str
+    event_host: str
+    event_price: str
 
 class EventRegistrationRead(BaseModel):
     event_registration_id: int
@@ -91,17 +90,18 @@ class EventRegistrationRead(BaseModel):
 
 class EventRegistrationCreate(BaseModel):
     event_id: int
-    event_reg_email: str
-    
-    
+    event_reg_date_time: datetime
+    event_reg_email: EmailStr
     
 class NewsRead(BaseModel):
     news_id: int
-    news_image: str
+    news_photo: str
+    news_title: str
     news_text: str
     news_date: datetime
 
 class NewsCreate(BaseModel):
-    news_image: str
+    news_photo: str
+    news_title: str
     news_text: str
     news_date: datetime
