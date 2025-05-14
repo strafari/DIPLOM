@@ -21,8 +21,7 @@ coworking = Table(
     "coworking",
     metadata,
     Column("coworking_id", Integer, primary_key=True),
-    Column("coworking_location", String(100), nullable=False),
-    Column("coworking_description", String(100), nullable=True),
+    Column("coworking_location", Integer, nullable=False),
 )
 
 booking = Table(
@@ -54,6 +53,9 @@ event = Table(
     Column("event_date_time", TIMESTAMP, nullable=False),
     Column("event_location", String(100), nullable=False),
     Column("event_max_seats", Integer, nullable=False),
+    Column("event_photo", String(255), nullable=False),
+    Column("event_host",String(255) , nullable=False),
+    Column("event_price",String(10) , nullable=False),
 )
 
 event_registration = Table(
@@ -70,7 +72,10 @@ news = Table(
     "news",
     metadata,
     Column("news_id", Integer, primary_key=True),
-    Column("news_image", String(255), nullable=False),  # URL или путь к изображению
+    Column("news_photo", String(255), nullable=False),  # URL или путь к изображению
     Column("news_text", String(5000), nullable=False),
     Column("news_date", TIMESTAMP, nullable=False),
+    Column("news_title", String(50), nullable=False),
 )
+
+
