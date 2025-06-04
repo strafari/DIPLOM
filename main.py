@@ -72,68 +72,68 @@ app.include_router(
 
 ############################ NEIRONKA
 
-# DEVICE_KEY = os.getenv("DEVICE_KEY")            # храните в .env / secrets
-# api_key_header = APIKeyHeader(name="X-Device-Key", auto_error=False)
+DEVICE_KEY = os.getenv("DEVICE_KEY")            # храните в .env / secrets
+api_key_header = APIKeyHeader(name="X-Device-Key", auto_error=False)
 
-# async def verify_device(api_key: str = Depends(api_key_header)) -> None:
-#     if not DEVICE_KEY:
-#         # ключ не настроен → доступ запрещён всем
-#         raise HTTPException(500, "DEVICE_KEY not configured")
-#     if api_key != DEVICE_KEY:
-#         raise HTTPException(403, "Invalid device key")
+async def verify_device(api_key: str = Depends(api_key_header)) -> None:
+    if not DEVICE_KEY:
+        # ключ не настроен → доступ запрещён всем
+        raise HTTPException(500, "DEVICE_KEY not configured")
+    if api_key != DEVICE_KEY:
+        raise HTTPException(403, "Invalid device key")
 
-# device_router = APIRouter(
-#     prefix="/device",                
-#     tags=["device"],
-#     dependencies=[Depends(verify_device)]  
-# )
+device_router = APIRouter(
+    prefix="/device",                
+    tags=["device"],
+    dependencies=[Depends(verify_device)]  
+)
 
 
-# class SeatStatusUpdate(BaseModel):
-#     seat_status: int = Field(..., ge=0, le=1,
-#                              description="0 – свободно, 1 – занято")
+class SeatStatusUpdate(BaseModel):
+    seat_status: int = Field(..., ge=0, le=1,
+                             description="0 – свободно, 1 – занято")
     
 
-# _neironka_proc: subprocess.Popen | None = None
+_neironka_proc: subprocess.Popen | None = None
 
-# def _start_neironka():
-#     """
-#     Запускает neironka.py фоновым процессом.
-#     Все параметры передаём через переменные окружения,
-#     чтобы сам скрипт остался нетронутым.
-#     """
-#     global _neironka_proc
+def _start_neironka():
+    """
+    Запускает neironka.py фоновым процессом.
+    Все параметры передаём через переменные окружения,
+    чтобы сам скрипт остался нетронутым.
+    """
+    global _neironka_proc
 
-#     # путь к скрипту   (если он рядом с main.py – так и оставьте)
-#     script_path = r"C:\Users\4739310\Desktop\DIPLOM\diplom_project\neuronka\neironka.py"
+    # путь к скрипту   (если он рядом с main.py – так и оставьте)
+    script_path = r"C:\Users\4739310\Desktop\DIPLOM\diplom_project\neuronka\neironka.py"
 
-#     # формируем команду
-#     cmd = [
-#         sys.executable,      # то же Python-окружение, что и у бэка
-#         script_path,
-#         "--source", os.getenv("NEIRONKA_SOURCE", "0"),
-#     ]
+    # формируем команду
+    cmd = [
+        sys.executable,      # то же Python-окружение, что и у бэка
+        script_path,
+        "--source", os.getenv("NEIRONKA_SOURCE", "0"),
+    ]
 
-#     env = os.environ.copy()
-#     # то, что мы добавляли в neironka.py
-#     env.setdefault("BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
-#     #env.setdefault("SEAT_ID",     os.getenv("SEAT_ID",  ))
-#     env.setdefault("AUTH_TOKEN",  os.getenv("AUTH_TOKEN",  "ojyntHWGrul_idmZAJWpG8osDdL56QgVpZ6IcuxgwwY="))
+    env = os.environ.copy()
+    # то, что мы добавляли в neironka.py
+    env.setdefault("BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+    #env.setdefault("SEAT_ID",     os.getenv("SEAT_ID",  ))
+    env.setdefault("AUTH_TOKEN",  os.getenv("AUTH_TOKEN",  "ojyntHWGrul_idmZAJWpG8osDdL56QgVpZ6IcuxgwwY="))
 
-#     _neironka_proc = subprocess.Popen(cmd, env=env)
-#     print(f"✓ neironka запущена (pid={_neironka_proc.pid})")
+    _neironka_proc = subprocess.Popen(cmd, env=env)
+    print(f"✓ neironka запущена (pid={_neironka_proc.pid})")
 
-# def _stop_neironka():
-#     """Аккуратно гасим процесс YOLO при остановке FastAPI."""
-#     global _neironka_proc
-#     if _neironka_proc and _neironka_proc.poll() is None:  # ещё живой
-#         print("⏹  останавливаю neironka …")
-#         _neironka_proc.send_signal(signal.SIGTERM)
-#         try:
-#             _neironka_proc.wait(timeout=5)
-#         except subprocess.TimeoutExpired:
-#             _neironka_proc.kill()
-#         print("✓ neironka остановлена")
+def _stop_neironka():
+    """Аккуратно гасим процесс YOLO при остановке FastAPI."""
+    global _neironka_proc
+    if _neironka_proc and _neironka_proc.poll() is None:  # ещё живой
+        print("⏹  останавливаю neironka …")
+        _neironka_proc.send_signal(signal.SIGTERM)
+        try:
+            _neironka_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _neironka_proc.kill()
+        print("✓ neironka остановлена")
         
     
 current_user = fastapi_users.current_user()
@@ -203,7 +203,7 @@ async def delete_user(
 @app.get("/coworking/", response_model=List[dict], tags=["coworking"])
 async def get_all_coworking(
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_user),
+    # user: User = Depends(current_user),
 ):
     # if not user.is_superuser:
     #     raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
@@ -213,7 +213,7 @@ async def get_all_coworking(
         {
             "coworking_id": cw.coworking_id,
             "coworking_location": cw.coworking_location,
-            "coworking_description": cw.coworking_description,
+          #  "coworking_description": cw.coworking_description,
         }
         for cw in coworking_spaces
     ]
@@ -234,7 +234,7 @@ async def create_coworking(
     return {
         "coworking_id": created_cw.coworking_id,
         "coworking_location": created_cw.coworking_location,
-        "coworking_description": created_cw.coworking_description,
+       # "coworking_description": created_cw.coworking_description,
     }
 
 
@@ -263,7 +263,7 @@ async def update_coworking(
     return {
         "coworking_id": updated.coworking_id,
         "coworking_location": updated.coworking_location,
-        "coworking_description": updated.coworking_description,
+       # "coworking_description": updated.coworking_description,
     }
 
 
@@ -379,7 +379,7 @@ async def delete_booking(
 @app.get("/seats/", response_model=List[SeatRead], tags=["seats"])
 async def get_all_seats(
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_user),
+    # user: User = Depends(current_user),
 ):
     # if not user.is_superuser:
     #     raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
@@ -402,35 +402,35 @@ async def create_seat(
     return created_seat
 
 
-# @device_router.get("/seats", response_model=List[int])
-# async def device_list_seat_ids(
-#     session: AsyncSession = Depends(get_async_session),
-# ):
-#     """
-#     Возвращает список ВСЕХ seat_id.
-#     Доступно только по X-Device-Key.
-#     """
-#     result = await session.execute(select(Seat.seat_id))
-#     return result.scalars().all()
+@device_router.get("/seats", response_model=List[int])
+async def device_list_seat_ids(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Возвращает список ВСЕХ seat_id.
+    Доступно только по X-Device-Key.
+    """
+    result = await session.execute(select(Seat.seat_id))
+    return result.scalars().all()
 
-# @device_router.put("/seats/{seat_id}/status", response_model=SeatRead)
-# async def update_seat_status_device(
-#     seat_id: int,
-#     body: SeatStatusUpdate,   # { seat_status: Literal[0,1] }
-#     session: AsyncSession = Depends(get_async_session),
-# ):
-#     stmt = (
-#         update(Seat)
-#         .where(Seat.seat_id == seat_id)
-#         .values(seat_status=body.seat_status)
-#         .returning(Seat)
-#     )
-#     result = await session.execute(stmt)
-#     seat = result.scalar_one_or_none()
-#     if seat is None:
-#         raise HTTPException(404, "Seat not found")
-#     await session.commit()
-#     return seat
+@device_router.put("/seats/{seat_id}/status", response_model=SeatRead)
+async def update_seat_status_device(
+    seat_id: int,
+    body: SeatStatusUpdate,   # { seat_status: Literal[0,1] }
+    session: AsyncSession = Depends(get_async_session),
+):
+    stmt = (
+        update(Seat)
+        .where(Seat.seat_id == seat_id)
+        .values(seat_status=body.seat_status)
+        .returning(Seat)
+    )
+    result = await session.execute(stmt)
+    seat = result.scalar_one_or_none()
+    if seat is None:
+        raise HTTPException(404, "Seat not found")
+    await session.commit()
+    return seat
     
 @app.put("/seats/{seat_id}/status", response_model=SeatRead, tags=["seats"])
 async def update_seat_status(
@@ -486,6 +486,14 @@ async def delete_seat(
 #     #     raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
 #     result = await session.execute(select(Event))
 #     return result.scalars().all()
+
+@app.get("/events/", response_model=List[EventRead], tags=["events"])
+async def get_all_events(
+    session: AsyncSession = Depends(get_async_session),
+    
+ ):
+    result = await session.execute(select(Event))
+    return result.scalars().all()
 
 @app.get("/events/{event_id}", response_model=EventRead, tags=["events"])
 async def get_event_by_id(
@@ -655,6 +663,15 @@ async def delete_event_registration(
 #     result = await session.execute(select(News))
 #     return result.scalars().all()
 
+@app.get("/news/", response_model=List[NewsRead], tags=["news"])
+async def get_all_news(
+    session: AsyncSession = Depends(get_async_session),
+    
+):
+    
+    result = await session.execute(select(News))
+    return result.scalars().all()
+
 @app.get("/news/{news_id}", response_model=NewsRead, tags=["news"])
 async def get_news_by_id(
     news_id: int,
@@ -727,12 +744,12 @@ async def delete_news(
 
 
 
-# app.include_router(device_router)
+app.include_router(device_router)
 
-# @app.on_event("startup")
-# async def _on_startup():
-#     _start_neironka()
+@app.on_event("startup")
+async def _on_startup():
+    _start_neironka()
 
-# @app.on_event("shutdown")
-# async def _on_shutdown():
-#     _stop_neironka()
+@app.on_event("shutdown")
+async def _on_shutdown():
+    _stop_neironka()
