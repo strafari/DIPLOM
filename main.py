@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 from starlette.responses import StreamingResponse
 from fastapi_users import fastapi_users, FastAPIUsers
 from pydantic import BaseModel, Field
@@ -8,7 +8,7 @@ from fastapi import HTTPException,File, Form, UploadFile
 from fastapi import FastAPI, Request, status, Depends, Query, APIRouter
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, insert, delete, update
+from sqlalchemy import func, select, insert, delete, update
 from auth.auth import auth_backend
 from auth.database import (
     User,
@@ -301,6 +301,68 @@ async def get_all_bookings(
     result = await session.execute(select(Booking))
     return result.scalars().all()
 
+@app.get("/stats/bookings/counts", response_class=JSONResponse, tags=["stats"])
+async def stats_bookings_counts(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю")
+
+    stmt = (
+        select(
+            Coworking.coworking_location.label("coworking_location"),
+            func.count(Booking.booking_id).label("count_bookings")
+        )
+        .join(Booking, Coworking.coworking_id == Booking.booking_seat_id, isouter=True)
+        .group_by(Coworking.coworking_location)
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()  # List[Row(event_name=..., count_bookings=... )]
+
+    data: List[Dict[str, object]] = [
+        {"coworking_location": r.coworking_location, "count_bookings": r.count_bookings}
+        for r in rows
+    ]
+    return JSONResponse(content=data)
+
+
+@app.get("/stats/bookings/daily", response_class=JSONResponse, tags=["stats"])
+async def stats_bookings_daily(
+    booking_start: date,
+    booking_end: date,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю")
+
+    base_stmt = select(
+        func.date(Booking.booking_start).label("day"),
+        func.count(Booking.booking_id).label("count")
+    )
+
+
+    stmt = (
+        base_stmt
+        .group_by(func.date(Booking.booking_start))
+        .order_by(func.date(Booking.booking_start))
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    data: List[Dict[str, object]] = [
+        {"day": r.day.isoformat(), "count": r.count}
+        for r in rows
+    ]
+    return JSONResponse(content=data)
+
+
+
 
 @app.post("/bookings/", response_model=BookingRead, tags=["booking"])
 async def create_booking(
@@ -401,17 +463,14 @@ async def create_seat(
 async def device_list_seat_ids(
     session: AsyncSession = Depends(get_async_session),
 ):
-    """
-    Возвращает список ВСЕХ seat_id.
-    Доступно только по X-Device-Key.
-    """
+
     result = await session.execute(select(Seat.seat_id))
     return result.scalars().all()
 
 @device_router.put("/seats/{seat_id}/status", response_model=SeatRead)
 async def update_seat_status_device(
     seat_id: int,
-    body: SeatStatusUpdate,   # { seat_status: Literal[0,1] }
+    body: SeatStatusUpdate,   
     session: AsyncSession = Depends(get_async_session),
 ):
     stmt = (
@@ -674,6 +733,71 @@ async def get_all_event_registrations(
     result = await session.execute(select(EventRegistration))
     return result.scalars().all()
 
+
+@app.get("/stats/registrations/counts", response_class=JSONResponse, tags=["stats"])
+async def stats_registrations_counts(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю")
+
+    stmt = (
+        select(
+            Event.event_name.label("event_name"),
+            func.count(EventRegistration.event_registration_id).label("count_regs")
+        )
+        .join(EventRegistration, Event.event_id == EventRegistration.event_registration_id, isouter=True)
+        .group_by(Event.event_name)
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()  # List[Row(event_name=..., count_regs=...)]
+
+    # 2) Преобразуем в Python-список словарей
+    data: List[Dict[str, object]] = [
+        {"event_name": r.event_name, "count_regs": r.count_regs}
+        for r in rows
+    ]
+    return JSONResponse(content=data)
+
+@app.get("/stats/registrations/daily", response_class=JSONResponse, tags=["stats"])
+async def stats_registrations_daily(
+    event_reg_date_time: Optional[date] = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю")
+
+    # 1) Базовый запрос: SELECT DATE(reg_date) AS day, COUNT(reg_id) AS count
+    base_stmt = select(
+        func.date(EventRegistration.event_reg_date_time).label("day"),
+        func.count(EventRegistration.event_registration_id).label("count")
+    )
+
+    # 2) Если переданы даты, добавляем WHERE
+    if event_reg_date_time is not None:
+        base_stmt = base_stmt.where(EventRegistration.event_reg_date_time >= event_reg_date_time)
+
+    # 3) Добаавлем GROUP BY и ORDER BY
+    stmt = (
+        base_stmt
+        .group_by(func.date(EventRegistration.event_reg_date_time))
+        .order_by(func.date(EventRegistration.event_reg_date_time))
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()  # List[Row(day=date_obj, count=int)]
+
+    # 4) Собираем JSON-список
+    data: List[Dict[str, object]] = [
+        {"day": r.day.isoformat(), "count": r.count}
+        for r in rows
+    ]
+    return JSONResponse(content=data)
 
 @app.post("/event_registrations/", response_model=EventRegistrationRead, tags=["event_reg"])
 async def create_event_registration(
