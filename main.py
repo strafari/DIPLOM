@@ -472,53 +472,7 @@ async def delete_seat(
 ######################## EVENTS
 
 
-# @app.get("/events/", response_model=List[EventRead], tags=["events"])
-# async def get_all_events(
-#     session: AsyncSession = Depends(get_async_session),
-#     user: User = Depends(current_user),
-# ):
-#     # if not user.is_superuser:
-#     #     raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
-#     result = await session.execute(select(Event))
-#     return result.scalars().all()
 
-# @app.get("/events/", response_model=List[EventRead], tags=["events"])
-# async def get_all_events(
-#     session: AsyncSession = Depends(get_async_session),
-    
-#  ):
-#     result = await session.execute(select(Event))
-#     return result.scalars().all()
-
-# @app.get("/events/{event_id}", response_model=EventRead, tags=["events"])
-# async def get_event_by_id(
-#     event_id: int,
-#     session: AsyncSession = Depends(get_async_session),
-# ):
-#     result = await session.execute(
-#         select(Event).where(Event.event_id == event_id)
-#     )
-#     event = result.scalar_one_or_none()
-#     if event is None:
-#         raise HTTPException(status_code=404, detail="Event not found")
-#     return event
-
-
-# @app.post("/events/", response_model=EventRead, tags=["events"])
-# async def create_event(
-#     event: EventCreate,
-#     session: AsyncSession = Depends(get_async_session),
-#     user: User = Depends(current_user),
-# ):
-#     if not user.is_superuser:
-#         raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
-#     event_data = event.dict()
-#     event_data["event_date_time"] = event_data["event_date_time"].replace(tzinfo=None)
-#     stmt = insert(Event).values(**event_data).returning(Event)
-#     result = await session.execute(stmt)
-#     created_event = result.scalar_one()
-#     await session.commit()
-#     return created_event
 @app.post("/events/", response_model=EventRead, tags=["events"])
 async def create_event(
     event_name: str = Form(...),
@@ -646,16 +600,16 @@ async def delete_event(
     if not user.is_superuser:
         raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
 
-    # 1) Берём из БД запись, чтобы достать ключ
+    #  бд запись, чтобы достать ключ
     result = await session.execute(select(Event).where(Event.c.event_id == event_id))
     event_item = result.scalar_one_or_none()
     if not event_item:
         raise HTTPException(status_code=404, detail="Событие не найдено")
 
-    # 2) Удаляем объект из S3
+    # удаляет объект из S3
     await delete_object_from_s3(event_item.event_photo)
 
-    # 3) Удаляем запись из БД (связанные регистрации тоже можно убрать раньше)
+ 
     await session.execute(delete(Event).where(Event.c.event_id == event_id))
     await session.commit()
 
@@ -789,6 +743,217 @@ async def delete_event_registration(
 
 # NEWS
 
+@app.get("/news/", response_model=List[NewsRead], tags=["news"])
+async def get_all_news(
+    session: AsyncSession = Depends(get_async_session),
+    # user: User = Depends(current_user),   # по желанию
+):
+    result = await session.execute(select(News))
+    news_list = result.scalars().all()
+    news_out = []
+    for item in news_list:
+        presigned = await generate_presigned_url(item.news_photo)
+        news_out.append(
+            NewsRead(
+                news_id=item.news_id,
+                news_title=item.news_title,
+                news_text=item.news_text,
+                news_date=item.news_date,
+                news_photo=presigned,
+            )
+        )
+    return news_out
+
+
+@app.get("/news/{news_id}", response_model=NewsRead, tags=["news"])
+async def get_news_by_id(
+    news_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    # user: User = Depends(current_user),
+):
+    result = await session.execute(select(News).where(News.c.news_id == news_id))
+    news_item = result.scalar_one_or_none()
+    if not news_item:
+        raise HTTPException(status_code=404, detail="Новость не найдена")
+
+    # ключ для фотки
+    presigned = await generate_presigned_url(news_item.news_photo)
+
+    return NewsRead(
+        news_id=news_item.news_id,
+        news_title=news_item.news_title,
+        news_text=news_item.news_text,
+        news_date=news_item.news_date,
+        news_photo=presigned,
+    )
+
+    
+
+
+@app.post("/news/", response_model=NewsRead, tags=["news"])
+async def create_news(
+    news_title: str = Form(...),
+    news_text: str = Form(...),
+    news_date: datetime = Form(...),
+    photo: UploadFile = File(...),
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ запретён")
+
+    # генерит ключ и грузит картику 
+    key = generate_s3_key(photo.filename)
+    await upload_fileobj_to_s3(photo.file, key, photo.content_type)
+
+    news_data = {
+        "news_title": news_title,
+        "news_text": news_text,
+        "news_date": news_date.replace(tzinfo=None),
+        "news_photo": key, 
+    }
+    stmt = insert(News).values(**news_data).returning(News)
+    result = await session.execute(stmt)
+    created = result.scalar_one()
+    await session.commit()
+
+    # генерит url для фотки
+    presigned = await generate_presigned_url(created.news_photo)
+
+
+    return NewsRead(
+        news_id=created.news_id,
+        news_title=created.news_title,
+        news_text=created.news_text,
+        news_date=created.news_date,
+        news_photo=presigned,
+    )
+
+
+
+@app.put("/news/{news_id}", response_model=NewsRead, tags=["news"])
+async def update_news(
+    news_id: int,
+    news_item: NewsCreate,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
+
+    news_data = news_item.dict()
+    news_data["news_date"] = news_data["news_date"].replace(tzinfo=None)
+
+    stmt = (
+        update(News).where(News.news_id == news_id).values(**news_data).returning(News)
+    )
+    result = await session.execute(stmt)
+    updated_news = result.scalar_one_or_none()
+    if not updated_news:
+        raise HTTPException(status_code=404, detail="Новость не найдена")
+    await session.commit()
+    return updated_news
+
+
+
+
+
+@app.delete("/news/{news_id}", tags=["news"])
+async def delete_news(
+    news_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_user),
+):
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
+
+    result = await session.execute(select(News).where(News.c.news_id == news_id))
+    news_item = result.scalar_one_or_none()
+    if not news_item:
+        raise HTTPException(status_code=404, detail="Новость не найдена")
+
+    # Удаляем картинку из S3
+    await delete_object_from_s3(news_item.news_photo)
+
+    # Удаляем запись из БД
+    await session.execute(delete(News).where(News.c.news_id == news_id))
+    await session.commit()
+
+    # Возвращаем простой ответ без response_model
+    return {"message": "Новость и картинка удалены"}
+
+
+
+
+app.include_router(device_router)
+
+@app.on_event("startup")
+async def _on_startup():
+    _start_neironka()
+
+@app.on_event("shutdown")
+async def _on_shutdown():
+    _stop_neironka()
+
+
+
+
+
+
+#########################################СТАРЫЕ ЭВЕНТЫ
+
+# @app.get("/events/", response_model=List[EventRead], tags=["events"])
+# async def get_all_events(
+#     session: AsyncSession = Depends(get_async_session),
+#     user: User = Depends(current_user),
+# ):
+#     # if not user.is_superuser:
+#     #     raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
+#     result = await session.execute(select(Event))
+#     return result.scalars().all()
+
+# @app.get("/events/", response_model=List[EventRead], tags=["events"])
+# async def get_all_events(
+#     session: AsyncSession = Depends(get_async_session),
+    
+#  ):
+#     result = await session.execute(select(Event))
+#     return result.scalars().all()
+
+# @app.get("/events/{event_id}", response_model=EventRead, tags=["events"])
+# async def get_event_by_id(
+#     event_id: int,
+#     session: AsyncSession = Depends(get_async_session),
+# ):
+#     result = await session.execute(
+#         select(Event).where(Event.event_id == event_id)
+#     )
+#     event = result.scalar_one_or_none()
+#     if event is None:
+#         raise HTTPException(status_code=404, detail="Event not found")
+#     return event
+
+
+# @app.post("/events/", response_model=EventRead, tags=["events"])
+# async def create_event(
+#     event: EventCreate,
+#     session: AsyncSession = Depends(get_async_session),
+#     user: User = Depends(current_user),
+# ):
+#     if not user.is_superuser:
+#         raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
+#     event_data = event.dict()
+#     event_data["event_date_time"] = event_data["event_date_time"].replace(tzinfo=None)
+#     stmt = insert(Event).values(**event_data).returning(Event)
+#     result = await session.execute(stmt)
+#     created_event = result.scalar_one()
+#     await session.commit()
+#     return created_event
+
+
+
+################################## СТАРЫЕ НОВОСТИ
+
 
 # @app.get("/news/", response_model=List[NewsRead], tags=["news"])
 # async def get_all_news(
@@ -838,118 +1003,7 @@ async def delete_event_registration(
 #     created_news = result.scalar_one()
 #     await session.commit()
 #     return created_news
-@app.get("/news/", response_model=List[NewsRead], tags=["news"])
-async def get_all_news(
-    session: AsyncSession = Depends(get_async_session),
-    # user: User = Depends(current_user),   # по желанию
-):
-    result = await session.execute(select(News))
-    news_list = result.scalars().all()
-    news_out = []
-    for item in news_list:
-        presigned = await generate_presigned_url(item.news_photo)
-        news_out.append(
-            NewsRead(
-                news_id=item.news_id,
-                news_title=item.news_title,
-                news_text=item.news_text,
-                news_date=item.news_date,
-                news_photo=presigned,
-            )
-        )
-    return news_out
 
-
-@app.get("/news/{news_id}", response_model=NewsRead, tags=["news"])
-async def get_news_by_id(
-    news_id: int,
-    session: AsyncSession = Depends(get_async_session),
-    # user: User = Depends(current_user),
-):
-    result = await session.execute(select(News).where(News.c.news_id == news_id))
-    news_item = result.scalar_one_or_none()
-    if not news_item:
-        raise HTTPException(status_code=404, detail="Новость не найдена")
-
-    # Сгенерировать presigned URL на основе ключа из news_item.news_photo
-    presigned = await generate_presigned_url(news_item.news_photo)
-
-    # Возвращаем именно Pydantic-модель или словарь с нужными полями
-    return NewsRead(
-        news_id=news_item.news_id,
-        news_title=news_item.news_title,
-        news_text=news_item.news_text,
-        news_date=news_item.news_date,
-        news_photo=presigned,
-    )
-
-    
-
-
-@app.post("/news/", response_model=NewsRead, tags=["news"])
-async def create_news(
-    news_title: str = Form(...),
-    news_text: str = Form(...),
-    news_date: datetime = Form(...),
-    photo: UploadFile = File(...),
-    session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_user),
-):
-    if not user.is_superuser:
-        raise HTTPException(status_code=403, detail="Доступ запретён")
-
-    # Генерируем ключ и загружаем картинку
-    key = generate_s3_key(photo.filename)
-    await upload_fileobj_to_s3(photo.file, key, photo.content_type)
-
-    # Сохраняем в БД
-    news_data = {
-        "news_title": news_title,
-        "news_text": news_text,
-        "news_date": news_date.replace(tzinfo=None),
-        "news_photo": key,  # ключ, а не полный URL
-    }
-    stmt = insert(News).values(**news_data).returning(News)
-    result = await session.execute(stmt)
-    created = result.scalar_one()
-    await session.commit()
-
-    # Генерируем presigned URL
-    presigned = await generate_presigned_url(created.news_photo)
-
-    # Возвращаем модель
-    return NewsRead(
-        news_id=created.news_id,
-        news_title=created.news_title,
-        news_text=created.news_text,
-        news_date=created.news_date,
-        news_photo=presigned,
-    )
-
-
-
-@app.put("/news/{news_id}", response_model=NewsRead, tags=["news"])
-async def update_news(
-    news_id: int,
-    news_item: NewsCreate,
-    session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_user),
-):
-    if not user.is_superuser:
-        raise HTTPException(status_code=403, detail="Доступ разрешён только суперпользователю.")
-
-    news_data = news_item.dict()
-    news_data["news_date"] = news_data["news_date"].replace(tzinfo=None)
-
-    stmt = (
-        update(News).where(News.news_id == news_id).values(**news_data).returning(News)
-    )
-    result = await session.execute(stmt)
-    updated_news = result.scalar_one_or_none()
-    if not updated_news:
-        raise HTTPException(status_code=404, detail="Новость не найдена")
-    await session.commit()
-    return updated_news
 
 
 # @app.delete("/news/{news_id}", tags=["news"])
@@ -966,41 +1020,3 @@ async def update_news(
 #         raise HTTPException(status_code=404, detail="Новость не найдена")
 #     await session.commit()
 #     return {"message": "Новость удалена"}
-
-
-@app.delete("/news/{news_id}", tags=["news"])
-async def delete_news(
-    news_id: int,
-    session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_user),
-):
-    if not user.is_superuser:
-        raise HTTPException(status_code=403, detail="Доступ запрещён")
-
-    result = await session.execute(select(News).where(News.c.news_id == news_id))
-    news_item = result.scalar_one_or_none()
-    if not news_item:
-        raise HTTPException(status_code=404, detail="Новость не найдена")
-
-    # Удаляем картинку из S3
-    await delete_object_from_s3(news_item.news_photo)
-
-    # Удаляем запись из БД
-    await session.execute(delete(News).where(News.c.news_id == news_id))
-    await session.commit()
-
-    # Возвращаем простой ответ без response_model
-    return {"message": "Новость и картинка удалены"}
-
-
-
-
-app.include_router(device_router)
-
-@app.on_event("startup")
-async def _on_startup():
-    _start_neironka()
-
-@app.on_event("shutdown")
-async def _on_shutdown():
-    _stop_neironka()
