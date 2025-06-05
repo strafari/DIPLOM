@@ -72,63 +72,63 @@ app.include_router(
 
 ############################ NEIRONKA
 
-DEVICE_KEY = os.getenv("DEVICE_KEY")            # храните в .env / secrets
-api_key_header = APIKeyHeader(name="X-Device-Key", auto_error=False)
+# DEVICE_KEY = os.getenv("DEVICE_KEY")            # храните в .env / secrets
+# api_key_header = APIKeyHeader(name="X-Device-Key", auto_error=False)
 
-async def verify_device(api_key: str = Depends(api_key_header)) -> None:
-    if not DEVICE_KEY:
-        # ключ не настроен → доступ запрещён всем
-        raise HTTPException(500, "DEVICE_KEY not configured")
-    if api_key != DEVICE_KEY:
-        raise HTTPException(403, "Invalid device key")
+# async def verify_device(api_key: str = Depends(api_key_header)) -> None:
+#     if not DEVICE_KEY:
+#         # ключ не настроен → доступ запрещён всем
+#         raise HTTPException(500, "DEVICE_KEY not configured")
+#     if api_key != DEVICE_KEY:
+#         raise HTTPException(403, "Invalid device key")
 
-device_router = APIRouter(
-    prefix="/device",                
-    tags=["device"],
-    dependencies=[Depends(verify_device)]  
-)
+# device_router = APIRouter(
+#     prefix="/device",                
+#     tags=["device"],
+#     dependencies=[Depends(verify_device)]  
+# )
 
 
-class SeatStatusUpdate(BaseModel):
-    seat_status: int = Field(..., ge=0, le=1,
-                             description="0 – свободно, 1 – занято")
+# class SeatStatusUpdate(BaseModel):
+#     seat_status: int = Field(..., ge=0, le=1,
+#                              description="0 – свободно, 1 – занято")
     
 
-_neironka_proc: subprocess.Popen | None = None
+# _neironka_proc: subprocess.Popen | None = None
 
-def _start_neironka():
-#    запускает нейронку
-    global _neironka_proc
+# def _start_neironka():
+# #    запускает нейронку
+#     global _neironka_proc
 
-    # путь к скрипту  
-    script_path = r"C:\Users\4739310\Desktop\DIPLOM\diplom_project\neuronka\neironka.py"
+#     # путь к скрипту  
+#     script_path = r"C:\Users\4739310\Desktop\DIPLOM\diplom_project\neuronka\neironka.py"
 
-    cmd = [
-        sys.executable,      # то же окружение, что и у бэка
-        script_path,
-        "--source", os.getenv("NEIRONKA_SOURCE", "0"),
-    ]
+#     cmd = [
+#         sys.executable,      # то же окружение, что и у бэка
+#         script_path,
+#         "--source", os.getenv("NEIRONKA_SOURCE", "0"),
+#     ]
 
-    env = os.environ.copy()
-    # то, что мы добавляли в neironka.py
-    env.setdefault("BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
-    #env.setdefault("SEAT_ID",     os.getenv("SEAT_ID",  ))
-    env.setdefault("AUTH_TOKEN",  os.getenv("AUTH_TOKEN",  "ojyntHWGrul_idmZAJWpG8osDdL56QgVpZ6IcuxgwwY="))
+#     env = os.environ.copy()
+#     # то, что мы добавляли в neironka.py
+#     env.setdefault("BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+#     #env.setdefault("SEAT_ID",     os.getenv("SEAT_ID",  ))
+#     env.setdefault("AUTH_TOKEN",  os.getenv("AUTH_TOKEN",  "ojyntHWGrul_idmZAJWpG8osDdL56QgVpZ6IcuxgwwY="))
 
-    _neironka_proc = subprocess.Popen(cmd, env=env)
-    print(f"✓ neironka запущена (pid={_neironka_proc.pid})")
+#     _neironka_proc = subprocess.Popen(cmd, env=env)
+#     print(f"✓ neironka запущена (pid={_neironka_proc.pid})")
 
-def _stop_neironka():
-    """Аккуратно гасим процесс YOLO при остановке FastAPI."""
-    global _neironka_proc
-    if _neironka_proc and _neironka_proc.poll() is None:  # ещё живой
-        print("⏹  останавливаю neironka …")
-        _neironka_proc.send_signal(signal.SIGTERM)
-        try:
-            _neironka_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            _neironka_proc.kill()
-        print("✓ neironka остановлена")
+# def _stop_neironka():
+#     """Аккуратно гасим процесс YOLO при остановке FastAPI."""
+#     global _neironka_proc
+#     if _neironka_proc and _neironka_proc.poll() is None:  # ещё живой
+#         print("⏹  останавливаю neironka …")
+#         _neironka_proc.send_signal(signal.SIGTERM)
+#         try:
+#             _neironka_proc.wait(timeout=5)
+#         except subprocess.TimeoutExpired:
+#             _neironka_proc.kill()
+#         print("✓ neironka остановлена")
         
     
 current_user = fastapi_users.current_user()
@@ -459,32 +459,32 @@ async def create_seat(
     return created_seat
 
 
-@device_router.get("/seats", response_model=List[int])
-async def device_list_seat_ids(
-    session: AsyncSession = Depends(get_async_session),
-):
+# @device_router.get("/seats", response_model=List[int])
+# async def device_list_seat_ids(
+#     session: AsyncSession = Depends(get_async_session),
+# ):
 
-    result = await session.execute(select(Seat.seat_id))
-    return result.scalars().all()
+#     result = await session.execute(select(Seat.seat_id))
+#     return result.scalars().all()
 
-@device_router.put("/seats/{seat_id}/status", response_model=SeatRead)
-async def update_seat_status_device(
-    seat_id: int,
-    body: SeatStatusUpdate,   
-    session: AsyncSession = Depends(get_async_session),
-):
-    stmt = (
-        update(Seat)
-        .where(Seat.seat_id == seat_id)
-        .values(seat_status=body.seat_status)
-        .returning(Seat)
-    )
-    result = await session.execute(stmt)
-    seat = result.scalar_one_or_none()
-    if seat is None:
-        raise HTTPException(404, "Seat not found")
-    await session.commit()
-    return seat
+# @device_router.put("/seats/{seat_id}/status", response_model=SeatRead)
+# async def update_seat_status_device(
+#     seat_id: int,
+#     body: SeatStatusUpdate,   
+#     session: AsyncSession = Depends(get_async_session),
+# ):
+#     stmt = (
+#         update(Seat)
+#         .where(Seat.seat_id == seat_id)
+#         .values(seat_status=body.seat_status)
+#         .returning(Seat)
+#     )
+#     result = await session.execute(stmt)
+#     seat = result.scalar_one_or_none()
+#     if seat is None:
+#         raise HTTPException(404, "Seat not found")
+#     await session.commit()
+#     return seat
     
 @app.put("/seats/{seat_id}/status", response_model=SeatRead, tags=["seats"])
 async def update_seat_status(
@@ -1009,15 +1009,15 @@ async def delete_news(
 
 
 
-app.include_router(device_router)
+# app.include_router(device_router)
 
-@app.on_event("startup")
-async def _on_startup():
-    _start_neironka()
+# @app.on_event("startup")
+# async def _on_startup():
+#     _start_neironka()
 
-@app.on_event("shutdown")
-async def _on_shutdown():
-    _stop_neironka()
+# @app.on_event("shutdown")
+# async def _on_shutdown():
+#     _stop_neironka()
 
 
 
