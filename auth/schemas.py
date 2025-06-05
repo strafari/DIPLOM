@@ -74,7 +74,7 @@ class EventCreate(BaseModel):
     event_date_time: datetime
     event_location: str
     event_max_seats: int
-    event_photo: str
+    #event_photo: str
     event_host: str
     event_price: str
 
@@ -101,7 +101,7 @@ class NewsRead(BaseModel):
     news_date: datetime
 
 class NewsCreate(BaseModel):
-    news_photo: str
+    #news_photo: str
     news_title: str
     news_text: str
     news_date: datetime
